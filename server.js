@@ -305,7 +305,8 @@ app.listen(PORT, () => {
   console.log(`   FRONTEND_URL: "${MI_FRONTEND_URL}"`);
   console.log(`   Modo MP:    ${process.env.MP_ACCESS_TOKEN?.includes('TEST') ? '🧪 PRUEBAS' : '💰 PRODUCCIÓN'}`);
   console.log(`   Modo Wompi: ${WOMPI_PUBLIC_KEY?.includes('prod') ? '💰 PRODUCCIÓN' : '🧪 PRUEBAS'}`);
-  console.log(`   Modo Bold:  ${BOLD_IDENTITY_KEY?.includes('prod') ? '💰 PRODUCCIÓN' : '🧪 PRUEBAS'}`);
+  // Bold no usa 'prod' en sus llaves — detecto producción por longitud mínima
+  console.log(`   Modo Bold:  ${BOLD_IDENTITY_KEY?.length >= 20 ? '💰 PRODUCCIÓN' : '🧪 PRUEBAS'}`);
   console.log('   ════════════════════════════════════════════');
   console.log('');
 });
