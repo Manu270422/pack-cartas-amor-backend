@@ -48,17 +48,42 @@ const mpClient = new MercadoPagoConfig({
 const app  = express();
 const PORT = process.env.PORT || 3000;
 
-// Mi configuración de CORS — solo permito peticiones desde mi frontend
-// Esto evita que otros sitios usen mi backend sin permiso
-const MI_FRONTEND_URL = process.env.FRONTEND_URL;
+// Mi configuración de CORS — solo permito peticiones desde mis orígenes conocidos
+// Uso una función en lugar de un array para poder loguear y depurar fácilmente
+const MI_FRONTEND_URL = (process.env.FRONTEND_URL || '').trim(); // .trim() elimina espacios o saltos de línea invisibles
+
+// Mis orígenes permitidos — los defino explícitamente para máxima claridad
+const MIS_ORIGENES_PERMITIDOS = [
+  'https://pack-cartas-amor.netlify.app', // Mi frontend en producción — hardcodeado como respaldo
+  MI_FRONTEND_URL,                         // El mismo valor pero leído del .env (por si cambio el dominio)
+  'http://localhost:5500',                 // Mi Live Server de VS Code
+  'http://127.0.0.1:5500',                 // Alternativa de Live Server
+  'http://localhost:3000',                 // Por si abro el backend localmente
+  'null',                                  // Para abrir el HTML directamente en el navegador (file://)
+].filter(Boolean); // Elimino cualquier valor vacío o undefined que pudiera entrar
+
+// Log de diagnóstico al arrancar — así veo exactamente qué orígenes están permitidos
+console.log('🌐 Orígenes CORS permitidos:');
+MIS_ORIGENES_PERMITIDOS.forEach(o => console.log(`   ✓ ${o}`));
+
 app.use(cors({
-  origin: [
-    MI_FRONTEND_URL,              // Mi sitio en producción (Netlify)
-    'http://localhost:5500',       // Mi Live Server de VS Code
-    'http://127.0.0.1:5500',       // Alternativa de Live Server
-    'http://localhost:3001',       // Por si uso otro puerto local
-    'null',                        // Para abrir el HTML directamente en el navegador
-  ],
+  // Uso una función para poder ver en los logs qué origen está llegando
+  origin: function (origen, callback) {
+    // Logueo cada petición para poder depurar fácilmente desde Render
+    console.log(`📡 Petición CORS desde: "${origen}"`);
+
+    // Permito peticiones sin origen (Postman, curl, llamadas server-to-server)
+    if (!origen) return callback(null, true);
+
+    // Verifico si el origen está en mi lista de permitidos
+    if (MIS_ORIGENES_PERMITIDOS.includes(origen)) {
+      return callback(null, true); // ✅ Permitido
+    }
+
+    // Si no está en la lista, lo bloqueo y logueo el intento
+    console.warn(`🚫 CORS bloqueado para: "${origen}"`);
+    return callback(new Error(`Origen no permitido por CORS: ${origen}`));
+  },
   methods: ['GET', 'POST'],
   allowedHeaders: ['Content-Type'],
 }));
@@ -204,7 +229,8 @@ app.listen(PORT, () => {
   console.log('');
   console.log('🚀 ════════════════════════════════════════');
   console.log(`   Backend activo en http://localhost:${PORT}`);
-  console.log(`   Frontend esperado: ${MI_FRONTEND_URL}`);
+  console.log(`   FRONTEND_URL del .env: "${process.env.FRONTEND_URL}"`);
+  console.log(`   FRONTEND_URL procesada: "${MI_FRONTEND_URL}"`);
   console.log(`   Modo: ${process.env.MP_ACCESS_TOKEN?.includes('TEST') ? '🧪 PRUEBAS' : '💰 PRODUCCIÓN'}`);
   console.log('   ════════════════════════════════════════');
   console.log('');
