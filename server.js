@@ -1,6 +1,6 @@
 /*
   Mi servidor backend — Pack de Cartas de Amor Premium.
-  Integra: Mercado Pago (Checkout Pro) + Wompi (Widget con firma de integridad)
+  Integra: Mercado Pago + Wompi + Bold
 
   Para correr localmente:  npm run dev
   Para producción Render:  npm start
@@ -8,14 +8,13 @@
 
 require('dotenv').config();
 
-const express  = require('express');
-const cors     = require('cors');
-const crypto   = require('crypto'); // Nativo de Node — lo uso para la firma de Wompi
+const express = require('express');
+const cors    = require('cors');
+const crypto  = require('crypto');
 const { MercadoPagoConfig, Preference, Payment } = require('mercadopago');
 
 // ══════════════════════════════════════════════════════════════
-// VALIDACIÓN DE VARIABLES DE ENTORNO AL ARRANCAR
-// El servidor no arranca si falta alguna variable crítica
+// VALIDACIÓN DE VARIABLES AL ARRANCAR
 // ══════════════════════════════════════════════════════════════
 const VARIABLES_REQUERIDAS = [
   'MP_ACCESS_TOKEN',
@@ -24,6 +23,8 @@ const VARIABLES_REQUERIDAS = [
   'WOMPI_PRIVATE_KEY',
   'WOMPI_INTEGRITY_KEY',
   'WOMPI_EVENTS_KEY',
+  'BOLD_IDENTITY_KEY',
+  'BOLD_SECRET_KEY',
   'FRONTEND_URL',
 ];
 
@@ -31,12 +32,12 @@ const VARIABLES_FALTANTES = VARIABLES_REQUERIDAS.filter(v => !process.env[v]);
 if (VARIABLES_FALTANTES.length > 0) {
   console.error('❌ ERROR: Me faltan estas variables de entorno:');
   VARIABLES_FALTANTES.forEach(v => console.error(`   → ${v}`));
-  console.error('📄 Agrega las variables faltantes en Render → Environment.');
+  console.error('📄 Agrégalas en Render → Environment.');
   process.exit(1);
 }
 
 // ══════════════════════════════════════════════════════════════
-// MI CONFIGURACIÓN DE MERCADO PAGO (SDK v3)
+// MERCADO PAGO
 // ══════════════════════════════════════════════════════════════
 const mpClient = new MercadoPagoConfig({
   accessToken: process.env.MP_ACCESS_TOKEN,
@@ -44,25 +45,35 @@ const mpClient = new MercadoPagoConfig({
 });
 
 // ══════════════════════════════════════════════════════════════
-// MIS CONSTANTES DE WOMPI
-// Las leo del .env — nunca las escribo directo en el código
+// WOMPI
 // ══════════════════════════════════════════════════════════════
 const WOMPI_PUBLIC_KEY    = process.env.WOMPI_PUBLIC_KEY;
 const WOMPI_INTEGRITY_KEY = process.env.WOMPI_INTEGRITY_KEY;
 const WOMPI_EVENTS_KEY    = process.env.WOMPI_EVENTS_KEY;
 
-// Mi precio del producto en CENTAVOS — Wompi siempre trabaja en centavos
-// $15.000 COP × 100 = 1.500.000 centavos
-const PRECIO_CENTAVOS = 1500000;
+// ══════════════════════════════════════════════════════════════
+// BOLD
+// Bold usa su llave de identidad en el frontend para mostrar el botón,
+// y la llave secreta en el backend para generar la firma SHA-256
+// que protege cada transacción de manipulaciones.
+// ══════════════════════════════════════════════════════════════
+const BOLD_IDENTITY_KEY = process.env.BOLD_IDENTITY_KEY;
+const BOLD_SECRET_KEY   = process.env.BOLD_SECRET_KEY;
+
+// ══════════════════════════════════════════════════════════════
+// PRECIO DEL PRODUCTO
+// Lo centralizo aquí — un solo lugar para cambiarlo
+// ══════════════════════════════════════════════════════════════
+const PRECIO_PESOS    = 15000;         // Para Mercado Pago (pesos)
+const PRECIO_CENTAVOS = 1500000;       // Para Wompi (centavos)
 const MONEDA          = 'COP';
 
 // ══════════════════════════════════════════════════════════════
-// CONFIGURACIÓN DE EXPRESS Y CORS
+// EXPRESS Y CORS
 // ══════════════════════════════════════════════════════════════
 const app  = express();
 const PORT = process.env.PORT || 3000;
 
-// Limpio la URL del frontend: quito espacios y barra final
 const MI_FRONTEND_URL = (process.env.FRONTEND_URL || '').trim().replace(/\/$/, '');
 
 const MIS_ORIGENES_PERMITIDOS = [
@@ -92,36 +103,32 @@ app.use(cors({
 app.use(express.json());
 
 // ══════════════════════════════════════════════════════════════
-// MIS RUTAS
+// RUTA DE SALUD
 // ══════════════════════════════════════════════════════════════
-
-// ── Salud del servidor ──
 app.get('/', (req, res) => {
   res.json({
-    estado:   'activo',
-    servicio: 'Backend — Pack de Cartas de Amor Premium',
-    version:  '2.0.0',
-    pasarelas: ['mercadopago', 'wompi'],
+    estado:    'activo',
+    servicio:  'Backend — Pack de Cartas de Amor Premium',
+    version:   '3.0.0',
+    pasarelas: ['mercadopago', 'wompi', 'bold'],
   });
 });
 
 
 // ══════════════════════════════════════════════════════════════
-// MERCADO PAGO — Crear preferencia de pago
+// MERCADO PAGO — Crear preferencia
 // ══════════════════════════════════════════════════════════════
 app.post('/api/crear-preferencia', async (req, res) => {
   try {
-    const PRODUCTO = {
-      title:       'Pack de Cartas de Amor Premium — El Mundo de Manu',
-      quantity:    1,
-      currency_id: MONEDA,
-      unit_price:  15000, // En pesos — MP no usa centavos
-    };
-
     const preference = new Preference(mpClient);
     const resultado  = await preference.create({
       body: {
-        items: [PRODUCTO],
+        items: [{
+          title:       'Pack de Cartas de Amor Premium — El Mundo de Manu',
+          quantity:    1,
+          currency_id: MONEDA,
+          unit_price:  PRECIO_PESOS,
+        }],
         back_urls: {
           success: `${MI_FRONTEND_URL}/success.html`,
           failure: `${MI_FRONTEND_URL}/index.html?pago=error`,
@@ -135,12 +142,7 @@ app.post('/api/crear-preferencia', async (req, res) => {
     });
 
     console.log(`✅ MP Preferencia creada: ${resultado.id}`);
-
-    res.json({
-      ok:           true,
-      init_point:   resultado.init_point,
-      preference_id: resultado.id,
-    });
+    res.json({ ok: true, init_point: resultado.init_point, preference_id: resultado.id });
 
   } catch (error) {
     console.error('❌ Error MP:', error?.message || error);
@@ -148,19 +150,15 @@ app.post('/api/crear-preferencia', async (req, res) => {
   }
 });
 
-
-// ── Webhook de Mercado Pago ──
+// Webhook MP
 app.post('/webhook/mercadopago', async (req, res) => {
   try {
     const { type, data } = req.body;
     if (type !== 'payment') return res.sendStatus(200);
-
-    const pago        = new Payment(mpClient);
-    const detallePago = await pago.get({ id: data.id });
-    console.log(`📦 Webhook MP | ID: ${detallePago.id} | Estado: ${detallePago.status}`);
-    if (detallePago.status === 'approved') {
-      console.log(`💰 Pago MP APROBADO: $${detallePago.transaction_amount} COP`);
-    }
+    const pago = new Payment(mpClient);
+    const detalle = await pago.get({ id: data.id });
+    console.log(`📦 Webhook MP | ID: ${detalle.id} | Estado: ${detalle.status}`);
+    if (detalle.status === 'approved') console.log(`💰 Pago MP APROBADO: $${detalle.transaction_amount} COP`);
     res.sendStatus(200);
   } catch (error) {
     console.error('❌ Webhook MP error:', error?.message);
@@ -171,81 +169,127 @@ app.post('/webhook/mercadopago', async (req, res) => {
 
 // ══════════════════════════════════════════════════════════════
 // WOMPI — Generar firma de integridad
-//
-// ¿Por qué necesito esto?
-// Wompi exige que cada transacción tenga una firma SHA-256 calculada
-// con mi llave de integridad (que es secreta). Si esta firma no coincide,
-// Wompi rechaza el pago. Por eso NUNCA puedo calcularla en el frontend
-// — cualquiera podría ver la llave y falsificar transacciones.
-//
-// Fórmula oficial de Wompi:
-//   SHA256( referencia + monto_en_centavos + moneda + llave_integridad )
 // ══════════════════════════════════════════════════════════════
 app.post('/api/wompi-firma', (req, res) => {
   try {
-    // Genero una referencia única para esta transacción
-    // Wompi la usa para identificar el pago en su sistema
-    const referencia = `CARTAS-W-${Date.now()}-${Math.random().toString(36).slice(2,7).toUpperCase()}`;
+    const referencia   = `CARTAS-W-${Date.now()}-${Math.random().toString(36).slice(2,7).toUpperCase()}`;
+    const cadenaFirma  = `${referencia}${PRECIO_CENTAVOS}${MONEDA}${WOMPI_INTEGRITY_KEY}`;
+    const firma        = crypto.createHash('sha256').update(cadenaFirma).digest('hex');
 
-    // Construyo la cadena exacta que Wompi espera para calcular la firma
-    // ⚠️ El orden importa: referencia + monto + moneda + llave_integridad
-    const cadenaFirma = `${referencia}${PRECIO_CENTAVOS}${MONEDA}${WOMPI_INTEGRITY_KEY}`;
+    console.log(`🔐 Wompi firma generada | Ref: ${referencia}`);
 
-    // Calculo el hash SHA-256 — este es el "sello" que Wompi verifica
+    res.json({
+      ok:             true,
+      referencia,
+      firma,
+      monto_centavos: PRECIO_CENTAVOS,
+      moneda:         MONEDA,
+      llave_publica:  WOMPI_PUBLIC_KEY,
+      redirect_url:   `${MI_FRONTEND_URL}/success.html`,
+    });
+  } catch (error) {
+    console.error('❌ Error firma Wompi:', error?.message);
+    res.status(500).json({ ok: false, mensaje: 'No se pudo iniciar el pago con Wompi.' });
+  }
+});
+
+// Webhook Wompi
+app.post('/webhook/wompi', (req, res) => {
+  try {
+    const { data, timestamp, signature } = req.body;
+    const propiedades   = data?.transaction ? Object.values(data.transaction).join('') : '';
+    const cadenaVerif   = `${propiedades}${timestamp}${WOMPI_EVENTS_KEY}`;
+    const firmaEsperada = crypto.createHash('sha256').update(cadenaVerif).digest('hex');
+    if (signature?.checksum !== firmaEsperada) {
+      console.warn('⚠️ Webhook Wompi con firma inválida');
+      return res.sendStatus(401);
+    }
+    const tx = data?.transaction;
+    console.log(`📦 Webhook Wompi | ID: ${tx?.id} | Estado: ${tx?.status}`);
+    if (tx?.status === 'APPROVED') console.log(`💰 Pago Wompi APROBADO: $${tx.amount_in_cents / 100} COP`);
+    res.sendStatus(200);
+  } catch (error) {
+    console.error('❌ Webhook Wompi error:', error?.message);
+    res.sendStatus(500);
+  }
+});
+
+
+// ══════════════════════════════════════════════════════════════
+// BOLD — Generar firma de integridad
+//
+// Bold exige que cada transacción esté firmada con mi llave secreta.
+// La firma se calcula así (documentación oficial Bold):
+//   SHA256( orderId + amount + currency + secretKey )
+//
+// Donde:
+//   orderId  = mi referencia única (la genero yo)
+//   amount   = precio en PESOS (Bold NO usa centavos, a diferencia de Wompi)
+//   currency = 'COP'
+//   secretKey = mi llave secreta de Bold
+//
+// El frontend recibe la firma y la llave de identidad (pública)
+// para inicializar el botón de Bold en la página.
+// ══════════════════════════════════════════════════════════════
+app.post('/api/bold-firma', (req, res) => {
+  try {
+    // Mi referencia única para esta transacción Bold
+    const orderId = `CARTAS-B-${Date.now()}-${Math.random().toString(36).slice(2,7).toUpperCase()}`;
+
+    // Construyo la cadena según la documentación oficial de Bold
+    // ⚠️ Bold usa PESOS, no centavos (diferente a Wompi)
+    const cadenaFirma = `${orderId}${PRECIO_PESOS}${MONEDA}${BOLD_SECRET_KEY}`;
+
+    // Calculo SHA-256 — el sello que Bold verifica en cada transacción
     const firma = crypto
       .createHash('sha256')
       .update(cadenaFirma)
       .digest('hex');
 
-    console.log(`🔐 Wompi firma generada | Ref: ${referencia}`);
+    console.log(`🔐 Bold firma generada | Order: ${orderId}`);
 
-    // Le devuelvo al frontend todo lo que necesita para abrir el Widget
+    // Devuelvo al frontend todo lo que necesita para el botón de Bold
     res.json({
-      ok:              true,
-      referencia,                    // Identificador único de esta transacción
-      firma,                         // El hash SHA-256 que Wompi verifica
-      monto_centavos:  PRECIO_CENTAVOS,
-      moneda:          MONEDA,
-      llave_publica:   WOMPI_PUBLIC_KEY,   // La llave pública también la sirvo desde aquí
-      redirect_url:    `${MI_FRONTEND_URL}/success.html`,
+      ok:           true,
+      orderId,                          // ID único de la orden
+      firma,                            // Hash SHA-256 para validar la transacción
+      monto:        PRECIO_PESOS,       // En pesos (Bold no usa centavos)
+      moneda:       MONEDA,
+      identity_key: BOLD_IDENTITY_KEY,  // Llave pública para el botón de Bold
+      redirect_url: `${MI_FRONTEND_URL}/success.html`,
     });
 
   } catch (error) {
-    console.error('❌ Error generando firma Wompi:', error?.message);
-    res.status(500).json({ ok: false, mensaje: 'No se pudo iniciar el pago con Wompi.' });
+    console.error('❌ Error firma Bold:', error?.message);
+    res.status(500).json({ ok: false, mensaje: 'No se pudo iniciar el pago con Bold.' });
   }
 });
 
-
-// ── Webhook de Wompi ──
-// Wompi llama aquí cuando el estado de un pago cambia
-app.post('/webhook/wompi', (req, res) => {
+// Webhook Bold
+// Bold envía una notificación cuando el estado del pago cambia
+app.post('/webhook/bold', (req, res) => {
   try {
-    const { event, data, sent_at, timestamp, signature } = req.body;
+    const { order_id, status, amount, currency, signature } = req.body;
 
-    // Verifico que el webhook es legítimo usando mi llave de eventos
-    // Fórmula: SHA256( propiedades_del_evento + timestamp + llave_eventos )
-    const propiedades = data?.transaction
-      ? Object.values(data.transaction).join('')
-      : '';
-    const cadenaVerif = `${propiedades}${timestamp}${WOMPI_EVENTS_KEY}`;
+    // Verifico la autenticidad del webhook con mi llave secreta
+    // Fórmula: SHA256( orderId + status + secretKey )
+    const cadenaVerif   = `${order_id}${status}${BOLD_SECRET_KEY}`;
     const firmaEsperada = crypto.createHash('sha256').update(cadenaVerif).digest('hex');
 
-    if (signature?.checksum !== firmaEsperada) {
-      console.warn('⚠️ Webhook Wompi con firma inválida — ignorado');
+    if (signature !== firmaEsperada) {
+      console.warn('⚠️ Webhook Bold con firma inválida — ignorado');
       return res.sendStatus(401);
     }
 
-    const transaccion = data?.transaction;
-    console.log(`📦 Webhook Wompi | ID: ${transaccion?.id} | Estado: ${transaccion?.status}`);
+    console.log(`📦 Webhook Bold | Order: ${order_id} | Estado: ${status}`);
 
-    if (transaccion?.status === 'APPROVED') {
-      console.log(`💰 Pago Wompi APROBADO: $${transaccion.amount_in_cents / 100} COP`);
+    if (status === 'APPROVED') {
+      console.log(`💰 Pago Bold APROBADO: $${amount} ${currency}`);
     }
 
     res.sendStatus(200);
   } catch (error) {
-    console.error('❌ Webhook Wompi error:', error?.message);
+    console.error('❌ Webhook Bold error:', error?.message);
     res.sendStatus(500);
   }
 });
@@ -258,9 +302,10 @@ app.listen(PORT, () => {
   console.log('');
   console.log('🚀 ════════════════════════════════════════════');
   console.log(`   Backend activo en http://localhost:${PORT}`);
-  console.log(`   FRONTEND_URL procesada: "${MI_FRONTEND_URL}"`);
+  console.log(`   FRONTEND_URL: "${MI_FRONTEND_URL}"`);
   console.log(`   Modo MP:    ${process.env.MP_ACCESS_TOKEN?.includes('TEST') ? '🧪 PRUEBAS' : '💰 PRODUCCIÓN'}`);
   console.log(`   Modo Wompi: ${WOMPI_PUBLIC_KEY?.includes('prod') ? '💰 PRODUCCIÓN' : '🧪 PRUEBAS'}`);
+  console.log(`   Modo Bold:  ${BOLD_IDENTITY_KEY?.includes('prod') ? '💰 PRODUCCIÓN' : '🧪 PRUEBAS'}`);
   console.log('   ════════════════════════════════════════════');
   console.log('');
 });
