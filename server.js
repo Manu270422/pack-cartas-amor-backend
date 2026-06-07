@@ -50,7 +50,7 @@ const PORT = process.env.PORT || 3000;
 
 // Mi configuración de CORS — solo permito peticiones desde mis orígenes conocidos
 // Uso una función en lugar de un array para poder loguear y depurar fácilmente
-const MI_FRONTEND_URL = (process.env.FRONTEND_URL || '').trim(); // .trim() elimina espacios o saltos de línea invisibles
+const MI_FRONTEND_URL = (process.env.FRONTEND_URL || '').trim().replace(/\/$/, ''); // .trim() quita espacios invisibles, .replace quita la barra final si la tiene (evita doble barra en las back_urls)
 
 // Mis orígenes permitidos — los defino explícitamente para máxima claridad
 const MIS_ORIGENES_PERMITIDOS = [
@@ -235,3 +235,4 @@ app.listen(PORT, () => {
   console.log('   ════════════════════════════════════════');
   console.log('');
 });
+
