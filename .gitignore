@@ -1,0 +1,16 @@
+# Mi .gitignore del backend
+# Estos archivos NUNCA deben subirse a GitHub
+
+# Mi archivo de credenciales reales — el más importante de proteger
+.env
+
+# Dependencias de Node — pesan mucho y se reinstalan con "npm install"
+node_modules/
+
+# Archivos de sistema que no necesito en el repo
+.DS_Store
+Thumbs.db
+
+# Logs que genera Node a veces
+*.log
+npm-debug.log*
