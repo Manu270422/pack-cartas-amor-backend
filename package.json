@@ -1,6 +1,6 @@
 {
   "name": "cartas-amor-backend",
-  "version": "1.0.0",
+  "version": "4.0.0",
   "description": "Backend del Pack de Cartas de Amor Premium - El Mundo de Manu",
   "main": "server.js",
   "scripts": {
@@ -8,9 +8,11 @@
     "dev": "node --watch server.js"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.107.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
-    "mercadopago": "^3.1.0"
+    "mercadopago": "^3.1.0",
+    "resend": "^6.12.4"
   }
 }
