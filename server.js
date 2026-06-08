@@ -501,17 +501,28 @@ app.post('/api/bold-firma', (req, res) => {
 });
 
 // ── Webhook Bold ──
+// Según la documentación oficial de Bold, la verificación del webhook usa:
+// 1. Convertir el cuerpo recibido a Base64
+// 2. Cifrar ese Base64 con HMAC-SHA256 usando la llave secreta
+// 3. Comparar con el header X-BoldSignature
 app.post('/webhook/bold', async (req, res) => {
   try {
-    const { order_id, status, amount, currency, signature, metadata } = req.body;
+    // Leo el header de firma que Bold envía
+    const boldSignature = req.headers['x-boldsignature'] || req.headers['X-BoldSignature'];
+    const { order_id, status, amount, currency, metadata } = req.body;
 
-    // Verifico autenticidad
-    const cadenaVerif   = `${order_id}${status}${BOLD_SECRET_KEY}`;
-    const firmaEsperada = crypto.createHash('sha256').update(cadenaVerif).digest('hex');
+    // Verifico autenticidad con HMAC-SHA256 según doc oficial Bold
+    if (boldSignature) {
+      const cuerpoBase64  = Buffer.from(JSON.stringify(req.body)).toString('base64');
+      const firmaEsperada = crypto
+        .createHmac('sha256', BOLD_SECRET_KEY)
+        .update(cuerpoBase64)
+        .digest('hex');
 
-    if (signature !== firmaEsperada) {
-      console.warn('⚠️ Webhook Bold con firma inválida');
-      return res.sendStatus(401);
+      if (boldSignature !== firmaEsperada) {
+        console.warn('⚠️ Webhook Bold con firma inválida');
+        return res.sendStatus(401);
+      }
     }
 
     console.log(`📦 Webhook Bold | Order: ${order_id} | Estado: ${status}`);
