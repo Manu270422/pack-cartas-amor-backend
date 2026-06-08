@@ -68,8 +68,8 @@ const WOMPI_INTEGRITY_KEY = process.env.WOMPI_INTEGRITY_KEY;
 const WOMPI_EVENTS_KEY    = process.env.WOMPI_EVENTS_KEY;
 const BOLD_IDENTITY_KEY   = process.env.BOLD_IDENTITY_KEY;
 const BOLD_SECRET_KEY     = process.env.BOLD_SECRET_KEY;
-const PRECIO_PESOS        = 5000;
-const PRECIO_CENTAVOS     = 500000;
+const PRECIO_PESOS        = 1000;
+const PRECIO_CENTAVOS     = 100000;
 const MONEDA              = 'COP';
 
 // ══════════════════════════════════════════════════════════════
