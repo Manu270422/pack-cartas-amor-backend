@@ -18,7 +18,7 @@ const cors                 = require('cors');
 const crypto               = require('crypto');
 const { MercadoPagoConfig, Preference, Payment } = require('mercadopago');
 const { createClient }     = require('@supabase/supabase-js');
-const { Resend }           = require('resend');
+const nodemailer           = require('nodemailer'); // Gmail SMTP — funciona sin dominio propio
 
 // ══════════════════════════════════════════════════════════════
 // VALIDACIÓN DE VARIABLES AL ARRANCAR
@@ -28,7 +28,8 @@ const VARIABLES_REQUERIDAS = [
   'WOMPI_PUBLIC_KEY', 'WOMPI_PRIVATE_KEY', 'WOMPI_INTEGRITY_KEY', 'WOMPI_EVENTS_KEY',
   'BOLD_IDENTITY_KEY', 'BOLD_SECRET_KEY',
   'SUPABASE_URL', 'SUPABASE_SERVICE_KEY',
-  'RESEND_API_KEY', 'RESEND_FROM_EMAIL',
+  'GMAIL_USER',       // Mi correo Gmail: elmundodemanu2704@gmail.com
+  'GMAIL_APP_PASSWORD', // Mi contraseña de aplicación de Gmail (no la contraseña normal)
   'FRONTEND_URL',
 ];
 
@@ -57,8 +58,15 @@ const supabase = createClient(
   { auth: { autoRefreshToken: false, persistSession: false } }
 );
 
-// Resend — para enviar emails de acceso
-const resend = new Resend(process.env.RESEND_API_KEY);
+// Mi transporter de Gmail — envía a cualquier correo del mundo sin dominio propio
+// Usa contraseña de aplicación (no la contraseña normal de Gmail)
+const miTransporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.GMAIL_USER,
+    pass: process.env.GMAIL_APP_PASSWORD,
+  },
+});
 
 // ══════════════════════════════════════════════════════════════
 // CONSTANTES DEL PRODUCTO
@@ -160,8 +168,9 @@ async function enviarEmailAcceso({ email, nombre, token }) {
   const urlAcceso = `${MI_FRONTEND_URL}/personalizar.html?token=${token}`;
   const nombreMostrar = nombre || 'amigo/a';
 
-  const { error } = await resend.emails.send({
-    from:    process.env.RESEND_FROM_EMAIL, // Ej: hola@elmundomanu.com
+  // Envío el email usando Gmail SMTP — llega a cualquier correo del mundo
+  await miTransporter.sendMail({
+    from:    `"El Mundo de Manu" <${process.env.GMAIL_USER}>`,
     to:      email,
     subject: '💌 Tu Pack de Cartas de Amor Premium está listo',
     html: `
@@ -274,11 +283,6 @@ async function enviarEmailAcceso({ email, nombre, token }) {
 </html>
     `,
   });
-
-  if (error) {
-    console.error('❌ Error enviando email:', error);
-    throw new Error(`Resend error: ${error.message}`);
-  }
 
   console.log(`📧 Email de acceso enviado a: ${email}`);
 }
@@ -562,7 +566,7 @@ app.listen(PORT, () => {
   console.log(`   Modo Wompi: ${WOMPI_PUBLIC_KEY?.includes('prod') ? '💰 PRODUCCIÓN' : '🧪 PRUEBAS'}`);
   console.log(`   Modo Bold:  ${BOLD_IDENTITY_KEY?.length >= 20 ? '💰 PRODUCCIÓN' : '🧪 PRUEBAS'}`);
   console.log(`   Supabase:   ✅ ${process.env.SUPABASE_URL}`);
-  console.log(`   Email:      ✅ ${process.env.RESEND_FROM_EMAIL}`);
+  console.log(`   Email:      ✅ Gmail SMTP → ${process.env.GMAIL_USER}`);
   console.log('   ════════════════════════════════════════════');
   console.log('');
 });
