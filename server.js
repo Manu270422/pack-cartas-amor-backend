@@ -554,6 +554,59 @@ app.post('/webhook/bold', async (req, res) => {
 });
 
 
+// ── Recuperar token por email (para success.html) ──
+// El cliente llega a success.html sin token en la URL.
+// Con su email (guardado en sessionStorage) consultamos su token.
+// Protección: solo devuelve el token si el pago está 'aprobado'.
+// Rate limiting simple: máximo 5 consultas por IP por minuto.
+const _rateLimitEmailToken = new Map();
+app.post('/api/obtener-token-por-email', async (req, res) => {
+  const ip = req.ip || req.connection.remoteAddress;
+  const ahora = Date.now();
+
+  // Rate limit: 5 peticiones por IP por minuto
+  const historial = _rateLimitEmailToken.get(ip) || [];
+  const recientes = historial.filter(t => ahora - t < 60_000);
+  if (recientes.length >= 5) {
+    return res.status(429).json({ ok: false, razon: 'demasiadas_peticiones' });
+  }
+  _rateLimitEmailToken.set(ip, [...recientes, ahora]);
+
+  const { email } = req.body;
+  if (!email || !email.includes('@')) {
+    return res.status(400).json({ ok: false, razon: 'email_invalido' });
+  }
+
+  try {
+    // Espero hasta 8 segundos para que el webhook procese (Render puede tardar en despertar)
+    let compra = null;
+    for (let intento = 0; intento < 4; intento++) {
+      const { data } = await supabase
+        .from('compras')
+        .select('token, nombre')
+        .eq('email', email.toLowerCase().trim())
+        .eq('estado', 'aprobado')
+        .single();
+
+      if (data) { compra = data; break; }
+      if (intento < 3) await new Promise(r => setTimeout(r, 2000)); // espero 2s entre intentos
+    }
+
+    if (!compra) {
+      // El pago puede estar aún procesándose — no es un error definitivo
+      return res.status(202).json({ ok: false, razon: 'procesando', mensaje: 'El pago está siendo procesado. Revisa tu email en unos minutos.' });
+    }
+
+    console.log(`🔑 Token recuperado por email para: ${email}`);
+    return res.json({ ok: true, token: compra.token, nombre: compra.nombre || '' });
+
+  } catch (error) {
+    console.error('❌ Error recuperando token:', error.message);
+    return res.status(500).json({ ok: false, razon: 'error_servidor' });
+  }
+});
+
+
 // ══════════════════════════════════════════════════════════════
 // ARRANQUE
 // ══════════════════════════════════════════════════════════════
