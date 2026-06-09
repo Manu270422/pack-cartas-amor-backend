@@ -483,23 +483,47 @@ app.post('/webhook/wompi', async (req, res) => {
 
 
 // ── BOLD — Firma de integridad ──
+// Guardamos email+nombre en memoria indexado por orderId
+// El webhook de Bold lo busca por order_id para saber a quien enviar el acceso
+const _boldPendingOrders = new Map(); // orderId -> { email, nombre, ts }
+
 app.post('/api/bold-firma', (req, res) => {
   try {
+    const { email, nombre } = req.body;
+
+    if (!email || !email.includes('@')) {
+      return res.status(400).json({ ok: false, mensaje: 'Se requiere email valido.' });
+    }
+
     const orderId = `CARTAS-B-${Date.now()}-${Math.random().toString(36).slice(2,7).toUpperCase()}`;
     const cadena  = `${orderId}${PRECIO_PESOS}${MONEDA}${BOLD_SECRET_KEY}`;
     const firma   = crypto.createHash('sha256').update(cadena).digest('hex');
 
-    console.log(`🔐 Bold firma | Order: ${orderId}`);
+    // Guardo email+nombre asociado a este orderId (expira en 2h)
+    _boldPendingOrders.set(orderId, { email: email.toLowerCase().trim(), nombre: nombre || '', ts: Date.now() });
+
+    // Limpio entradas viejas para no acumular memoria
+    const dosHoras = 2 * 60 * 60 * 1000;
+    for (const [id, val] of _boldPendingOrders) {
+      if (Date.now() - val.ts > dosHoras) _boldPendingOrders.delete(id);
+    }
+
+    console.log(`Bold firma | Order: ${orderId} | Cliente: ${email}`);
+
+    // Incluyo email en redirect_url para que success.html lo lea directamente
+    // (Bold abre en nueva pestana, sessionStorage no se comparte entre pestanas)
+    const emailEnc  = encodeURIComponent(email);
+    const nombreEnc = encodeURIComponent(nombre || '');
 
     res.json({
       ok: true, orderId, firma,
       monto:        PRECIO_PESOS,
       moneda:       MONEDA,
       identity_key: BOLD_IDENTITY_KEY,
-      redirect_url: `${MI_FRONTEND_URL}/success.html`,
+      redirect_url: `${MI_FRONTEND_URL}/success.html?pago_email=${emailEnc}&pago_nombre=${nombreEnc}`,
     });
   } catch (error) {
-    console.error('❌ Error firma Bold:', error?.message);
+    console.error('Error firma Bold:', error?.message);
     res.status(500).json({ ok: false, mensaje: 'No se pudo iniciar el pago con Bold.' });
   }
 });
@@ -511,11 +535,10 @@ app.post('/api/bold-firma', (req, res) => {
 // 3. Comparar con el header X-BoldSignature
 app.post('/webhook/bold', async (req, res) => {
   try {
-    // Leo el header de firma que Bold envía
     const boldSignature = req.headers['x-boldsignature'] || req.headers['X-BoldSignature'];
     const { order_id, status, amount, currency, metadata } = req.body;
 
-    // Verifico autenticidad con HMAC-SHA256 según doc oficial Bold
+    // Verifico autenticidad con HMAC-SHA256 segun doc oficial Bold
     if (boldSignature) {
       const cuerpoBase64  = Buffer.from(JSON.stringify(req.body)).toString('base64');
       const firmaEsperada = crypto
@@ -524,31 +547,48 @@ app.post('/webhook/bold', async (req, res) => {
         .digest('hex');
 
       if (boldSignature !== firmaEsperada) {
-        console.warn('⚠️ Webhook Bold con firma inválida');
+        console.warn('Webhook Bold con firma invalida');
         return res.sendStatus(401);
       }
     }
 
-    console.log(`📦 Webhook Bold | Order: ${order_id} | Estado: ${status}`);
+    console.log(`Webhook Bold | Order: ${order_id} | Estado: ${status}`);
 
     if (status === 'APPROVED') {
-      const email  = metadata?.email || req.body.customer_email;
-      const nombre = metadata?.nombre || req.body.customer_name || '';
+      // Busco el email en 3 fuentes en orden de prioridad:
+      // 1. El Map _boldPendingOrders que guardamos al crear la firma (mas confiable)
+      // 2. metadata que Bold puede traer en el webhook
+      // 3. campos directos del cuerpo (fallback)
+      const pendingData = order_id ? _boldPendingOrders.get(order_id) : null;
+
+      const email  = pendingData?.email
+                  || metadata?.email
+                  || req.body.customer_email
+                  || null;
+
+      const nombre = pendingData?.nombre
+                  || metadata?.nombre
+                  || req.body.customer_name
+                  || '';
 
       if (email) {
+        // Limpio el registro pendiente ya procesado
+        if (order_id) _boldPendingOrders.delete(order_id);
+
         await procesarPagoAprobado({
           email, nombre,
           pasarela:       'bold',
           referenciaPago: order_id,
         });
       } else {
-        console.warn('⚠️ Pago Bold aprobado pero sin email');
+        console.warn('Pago Bold aprobado pero sin email | Order:', order_id);
+        console.warn('Body recibido:', JSON.stringify(req.body).slice(0, 300));
       }
     }
 
     res.sendStatus(200);
   } catch (error) {
-    console.error('❌ Webhook Bold error:', error?.message);
+    console.error('Webhook Bold error:', error?.message);
     res.sendStatus(500);
   }
 });
@@ -578,9 +618,10 @@ app.post('/api/obtener-token-por-email', async (req, res) => {
   }
 
   try {
-    // Espero hasta 8 segundos para que el webhook procese (Render puede tardar en despertar)
+    // Reintento hasta 5 veces con 3s de pausa = 15s maximos
+    // Esto cubre el cold start de Render (hasta ~10s) + tiempo de webhook
     let compra = null;
-    for (let intento = 0; intento < 4; intento++) {
+    for (let intento = 0; intento < 5; intento++) {
       const { data } = await supabase
         .from('compras')
         .select('token, nombre')
@@ -589,7 +630,7 @@ app.post('/api/obtener-token-por-email', async (req, res) => {
         .single();
 
       if (data) { compra = data; break; }
-      if (intento < 3) await new Promise(r => setTimeout(r, 2000)); // espero 2s entre intentos
+      if (intento < 4) await new Promise(r => setTimeout(r, 3000)); // 3s entre intentos
     }
 
     if (!compra) {
@@ -605,6 +646,10 @@ app.post('/api/obtener-token-por-email', async (req, res) => {
     return res.status(500).json({ ok: false, razon: 'error_servidor' });
   }
 });
+
+
+// ── Ping para mantener Render despierto (usar con UptimeRobot cada 5 min) ──
+app.get('/ping', (req, res) => res.json({ ok: true, ts: Date.now() }));
 
 
 // ══════════════════════════════════════════════════════════════
