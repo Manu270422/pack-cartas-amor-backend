@@ -18,7 +18,8 @@ const cors                 = require('cors');
 const crypto               = require('crypto');
 const { MercadoPagoConfig, Preference, Payment } = require('mercadopago');
 const { createClient }     = require('@supabase/supabase-js');
-const nodemailer           = require('nodemailer'); // Gmail SMTP — funciona sin dominio propio
+const nodemailer           = require('nodemailer'); // Gmail SMTP — fallback local
+const { Resend }           = require('resend');     // HTTP port 443 — funciona en Render free
 
 // ══════════════════════════════════════════════════════════════
 // VALIDACIÓN DE VARIABLES AL ARRANCAR
@@ -168,13 +169,8 @@ async function enviarEmailAcceso({ email, nombre, token }) {
   const urlAcceso = `${MI_FRONTEND_URL}/personalizar.html?token=${token}`;
   const nombreMostrar = nombre || 'amigo/a';
 
-  // Envío el email usando Gmail SMTP — llega a cualquier correo del mundo
-  await miTransporter.sendMail({
-    from:    `"El Mundo de Manu" <${process.env.GMAIL_USER}>`,
-    to:      email,
-    subject: '💌 Tu Pack de Cartas de Amor Premium está listo',
-    html: `
-<!DOCTYPE html>
+  // ── Preparar contenido del email ──
+  const htmlContent = `<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8">
@@ -281,10 +277,41 @@ async function enviarEmailAcceso({ email, nombre, token }) {
 
 </body>
 </html>
-    `,
-  });
+`;
 
-  console.log(`📧 Email de acceso enviado a: ${email}`);
+  const asunto = '💌 Tu Pack de Cartas de Amor Premium está listo';
+  const remitente = `El Mundo de Manu <${process.env.GMAIL_USER}>`;
+
+  // ── Intentar con Resend (HTTP puerto 443 — funciona en Render free) ──
+  if (process.env.RESEND_API_KEY) {
+    try {
+      const resend = new Resend(process.env.RESEND_API_KEY);
+      await resend.emails.send({
+        from:    'El Mundo de Manu <onboarding@resend.dev>',
+        to:      email,
+        subject: asunto,
+        html:    htmlContent,
+      });
+      console.log(`📧 Email enviado via Resend a: ${email}`);
+      return;
+    } catch (resendError) {
+      console.warn(`⚠️ Resend falló: ${resendError.message} — intentando Gmail SMTP...`);
+    }
+  }
+
+  // ── Fallback: Gmail SMTP (funciona en local, puede fallar en Render free) ──
+  if (process.env.GMAIL_APP_PASSWORD) {
+    await miTransporter.sendMail({
+      from:    remitente,
+      to:      email,
+      subject: asunto,
+      html:    htmlContent,
+    });
+    console.log(`📧 Email enviado via Gmail SMTP a: ${email}`);
+    return;
+  }
+
+  throw new Error('No hay transporte de email configurado (RESEND_API_KEY ni GMAIL_APP_PASSWORD)');
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -294,7 +321,7 @@ async function enviarEmailAcceso({ email, nombre, token }) {
 app.get('/', (req, res) => res.json({
   estado: 'activo',
   servicio: 'Backend — Pack de Cartas de Amor Premium',
-  version: '6.0.0',
+  version: '7.0.0',
   pasarelas: ['mercadopago', 'wompi', 'bold'],
 }));
 
@@ -685,7 +712,8 @@ app.listen(PORT, () => {
   console.log(`   Modo Wompi: ${WOMPI_PUBLIC_KEY?.includes('prod') ? '💰 PRODUCCIÓN' : '🧪 PRUEBAS'}`);
   console.log(`   Modo Bold:  ${BOLD_IDENTITY_KEY?.length >= 20 ? '💰 PRODUCCIÓN' : '🧪 PRUEBAS'}`);
   console.log(`   Supabase:   ✅ ${process.env.SUPABASE_URL}`);
-  console.log(`   Email:      ✅ Gmail SMTP → ${process.env.GMAIL_USER}`);
+  const transporteEmail = process.env.RESEND_API_KEY ? 'Resend (HTTP)' : 'Gmail SMTP';
+  console.log(`   Email:      ✅ ${transporteEmail} → ${process.env.GMAIL_USER}`);
   console.log('   ════════════════════════════════════════════');
   console.log('');
 });
