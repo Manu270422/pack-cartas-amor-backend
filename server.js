@@ -294,7 +294,7 @@ async function enviarEmailAcceso({ email, nombre, token }) {
 app.get('/', (req, res) => res.json({
   estado: 'activo',
   servicio: 'Backend — Pack de Cartas de Amor Premium',
-  version: '4.0.0',
+  version: '5.0.0',
   pasarelas: ['mercadopago', 'wompi', 'bold'],
 }));
 
