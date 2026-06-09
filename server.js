@@ -168,9 +168,6 @@ async function enviarEmailAcceso({ email, nombre, token }) {
   const urlAcceso = `${MI_FRONTEND_URL}/personalizar.html?token=${token}`;
   const nombreMostrar = nombre || 'amigo/a';
 
-  const urlAcceso     = `${MI_FRONTEND_URL}/personalizar.html?token=${token}`;
-  const nombreMostrar = nombre || 'amigo/a';
-
   await miTransporter.sendMail({
     from:    `"El Mundo de Manu" <${process.env.GMAIL_USER}>`,
     to:      email,
