@@ -294,7 +294,7 @@ async function enviarEmailAcceso({ email, nombre, token }) {
 app.get('/', (req, res) => res.json({
   estado: 'activo',
   servicio: 'Backend — Pack de Cartas de Amor Premium',
-  version: '5.0.0',
+  version: '6.0.0',
   pasarelas: ['mercadopago', 'wompi', 'bold'],
 }));
 
@@ -404,7 +404,7 @@ app.post('/webhook/mercadopago', async (req, res) => {
           email,
           nombre,
           pasarela:       'mercadopago',
-          referenciaPago: detalle.external_reference || String(detalle.id),
+          referenciaPago: String(detalle.id),  // Guardamos el payment ID numérico para búsqueda directa desde success.html
         });
       } else {
         console.warn('⚠️ Pago MP aprobado pero sin email del cliente');
@@ -594,59 +594,80 @@ app.post('/webhook/bold', async (req, res) => {
 });
 
 
-// ── Recuperar token por email (para success.html) ──
-// El cliente llega a success.html sin token en la URL.
-// Con su email (guardado en sessionStorage) consultamos su token.
-// Protección: solo devuelve el token si el pago está 'aprobado'.
-// Rate limiting simple: máximo 5 consultas por IP por minuto.
-const _rateLimitEmailToken = new Map();
-app.post('/api/obtener-token-por-email', async (req, res) => {
-  const ip = req.ip || req.connection.remoteAddress;
-  const ahora = Date.now();
+// ── Recuperar token — Long Polling desde success.html ──────────────────────────
+// Busca por: 1) paymentId de MP (más directo), 2) referencia de Wompi/Bold, 3) email
+// Respuesta INMEDIATA — los reintentos los hace el frontend, no este endpoint
+const _rateLimitRecuperar = new Map();
 
-  // Rate limit: 5 peticiones por IP por minuto
-  const historial = _rateLimitEmailToken.get(ip) || [];
+app.post('/api/recuperar-token', async (req, res) => {
+  const ip     = req.ip || req.connection.remoteAddress;
+  const ahora  = Date.now();
+
+  // Rate limit: 20 peticiones por IP por minuto (permite los 10 intentos del polling)
+  const historial = _rateLimitRecuperar.get(ip) || [];
   const recientes = historial.filter(t => ahora - t < 60_000);
-  if (recientes.length >= 5) {
+  if (recientes.length >= 20) {
     return res.status(429).json({ ok: false, razon: 'demasiadas_peticiones' });
   }
-  _rateLimitEmailToken.set(ip, [...recientes, ahora]);
+  _rateLimitRecuperar.set(ip, [...recientes, ahora]);
 
-  const { email } = req.body;
-  if (!email || !email.includes('@')) {
-    return res.status(400).json({ ok: false, razon: 'email_invalido' });
+  const { paymentId, referencia, email } = req.body;
+
+  if (!paymentId && !referencia && !email) {
+    return res.status(400).json({ ok: false, razon: 'sin_identificador' });
   }
 
   try {
-    // Reintento hasta 5 veces con 3s de pausa = 15s maximos
-    // Esto cubre el cold start de Render (hasta ~10s) + tiempo de webhook
     let compra = null;
-    for (let intento = 0; intento < 5; intento++) {
+
+    // Prioridad 1: payment_id de Mercado Pago (viene en la URL de éxito)
+    // MP guarda el payment ID en referencia_pago cuando procesa el webhook
+    if (paymentId) {
       const { data } = await supabase
         .from('compras')
-        .select('token, nombre')
+        .select('token, nombre, email')
+        .eq('referencia_pago', String(paymentId))
+        .eq('estado', 'aprobado')
+        .single();
+      if (data) compra = data;
+    }
+
+    // Prioridad 2: referencia de Wompi o Bold
+    if (!compra && referencia) {
+      const { data } = await supabase
+        .from('compras')
+        .select('token, nombre, email')
+        .eq('referencia_pago', referencia)
+        .eq('estado', 'aprobado')
+        .single();
+      if (data) compra = data;
+    }
+
+    // Prioridad 3: email (fallback para cuando el webhook tardó)
+    if (!compra && email && email.includes('@')) {
+      const { data } = await supabase
+        .from('compras')
+        .select('token, nombre, email')
         .eq('email', email.toLowerCase().trim())
         .eq('estado', 'aprobado')
         .single();
-
-      if (data) { compra = data; break; }
-      if (intento < 4) await new Promise(r => setTimeout(r, 3000)); // 3s entre intentos
+      if (data) compra = data;
     }
 
     if (!compra) {
-      // El pago puede estar aún procesándose — no es un error definitivo
-      return res.status(202).json({ ok: false, razon: 'procesando', mensaje: 'El pago está siendo procesado. Revisa tu email en unos minutos.' });
+      // Aún no llegó el webhook — el frontend reintentará
+      return res.json({ ok: false, razon: 'procesando' });
     }
 
-    console.log(`🔑 Token recuperado por email para: ${email}`);
+    console.log(`Token recuperado para: ${compra.email}`);
     return res.json({ ok: true, token: compra.token, nombre: compra.nombre || '' });
 
   } catch (error) {
-    console.error('❌ Error recuperando token:', error.message);
-    return res.status(500).json({ ok: false, razon: 'error_servidor' });
+    console.error('Error recuperando token:', error.message);
+    // Devuelvo procesando (no error) para que el frontend siga intentando
+    return res.json({ ok: false, razon: 'procesando' });
   }
 });
-
 
 // ── Ping para mantener Render despierto (usar con UptimeRobot cada 5 min) ──
 app.get('/ping', (req, res) => res.json({ ok: true, ts: Date.now() }));
@@ -668,5 +689,3 @@ app.listen(PORT, () => {
   console.log('   ════════════════════════════════════════════');
   console.log('');
 });
-
-
