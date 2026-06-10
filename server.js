@@ -28,8 +28,10 @@ const VARIABLES_REQUERIDAS = [
   'WOMPI_PUBLIC_KEY', 'WOMPI_PRIVATE_KEY', 'WOMPI_INTEGRITY_KEY', 'WOMPI_EVENTS_KEY',
   'BOLD_IDENTITY_KEY', 'BOLD_SECRET_KEY',
   'SUPABASE_URL', 'SUPABASE_SERVICE_KEY',
-  'GMAIL_USER',       // Mi correo Gmail: elmundodemanu2704@gmail.com
-  'GMAIL_APP_PASSWORD', // Mi contraseña de aplicación de Gmail (no la contraseña normal)
+  'GMAIL_USER',
+  'GMAIL_CLIENT_ID',
+  'GMAIL_CLIENT_SECRET',
+  'GMAIL_REFRESH_TOKEN',
   'FRONTEND_URL',
 ];
 
@@ -58,13 +60,16 @@ const supabase = createClient(
   { auth: { autoRefreshToken: false, persistSession: false } }
 );
 
-// Mi transporter de Gmail — envía a cualquier correo del mundo sin dominio propio
-// Usa contraseña de aplicación (no la contraseña normal de Gmail)
+// Mi transporter de Gmail — usa OAuth2 (no SMTP port, funciona en cualquier nube)
+// Documentación: https://nodemailer.com/smtp/oauth2/
 const miTransporter = nodemailer.createTransport({
   service: 'gmail',
   auth: {
-    user: process.env.GMAIL_USER,
-    pass: process.env.GMAIL_APP_PASSWORD,
+    type:         'OAuth2',
+    user:         process.env.GMAIL_USER,
+    clientId:     process.env.GMAIL_CLIENT_ID,
+    clientSecret: process.env.GMAIL_CLIENT_SECRET,
+    refreshToken: process.env.GMAIL_REFRESH_TOKEN,
   },
 });
 
@@ -292,7 +297,7 @@ async function enviarEmailAcceso({ email, nombre, token }) {
 app.get('/', (req, res) => res.json({
   estado: 'activo',
   servicio: 'Backend — Pack de Cartas de Amor Premium',
-  version: '8.0.0',
+  version: '9.0.0',
   pasarelas: ['mercadopago', 'wompi', 'bold'],
 }));
 
@@ -683,7 +688,7 @@ app.listen(PORT, () => {
   console.log(`   Modo Wompi: ${WOMPI_PUBLIC_KEY?.includes('prod') ? '💰 PRODUCCIÓN' : '🧪 PRUEBAS'}`);
   console.log(`   Modo Bold:  ${BOLD_IDENTITY_KEY?.length >= 20 ? '💰 PRODUCCIÓN' : '🧪 PRUEBAS'}`);
   console.log(`   Supabase:   ✅ ${process.env.SUPABASE_URL}`);
-  console.log(`   Email:      ✅ Gmail SMTP → ${process.env.GMAIL_USER}`);
+  console.log(`   Email:      ✅ Gmail OAuth2 → ${process.env.GMAIL_USER}`);
   console.log('   ════════════════════════════════════════════');
   console.log('');
 });
