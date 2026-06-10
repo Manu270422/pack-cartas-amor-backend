@@ -18,7 +18,7 @@ const cors                 = require('cors');
 const crypto               = require('crypto');
 const { MercadoPagoConfig, Preference, Payment } = require('mercadopago');
 const { createClient }     = require('@supabase/supabase-js');
-const nodemailer           = require('nodemailer'); // Gmail SMTP
+const { Resend }           = require('resend');     // HTTP — funciona en cualquier nube sin bloqueo SMTP
 
 // ══════════════════════════════════════════════════════════════
 // VALIDACIÓN DE VARIABLES AL ARRANCAR
@@ -29,9 +29,7 @@ const VARIABLES_REQUERIDAS = [
   'BOLD_IDENTITY_KEY', 'BOLD_SECRET_KEY',
   'SUPABASE_URL', 'SUPABASE_SERVICE_KEY',
   'GMAIL_USER',
-  'GMAIL_CLIENT_ID',
-  'GMAIL_CLIENT_SECRET',
-  'GMAIL_REFRESH_TOKEN',
+  'RESEND_API_KEY',
   'FRONTEND_URL',
 ];
 
@@ -60,18 +58,7 @@ const supabase = createClient(
   { auth: { autoRefreshToken: false, persistSession: false } }
 );
 
-// Mi transporter de Gmail — usa OAuth2 (no SMTP port, funciona en cualquier nube)
-// Documentación: https://nodemailer.com/smtp/oauth2/
-const miTransporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    type:         'OAuth2',
-    user:         process.env.GMAIL_USER,
-    clientId:     process.env.GMAIL_CLIENT_ID,
-    clientSecret: process.env.GMAIL_CLIENT_SECRET,
-    refreshToken: process.env.GMAIL_REFRESH_TOKEN,
-  },
-});
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 // ══════════════════════════════════════════════════════════════
 // CONSTANTES DEL PRODUCTO
@@ -173,8 +160,8 @@ async function enviarEmailAcceso({ email, nombre, token }) {
   const urlAcceso = `${MI_FRONTEND_URL}/personalizar.html?token=${token}`;
   const nombreMostrar = nombre || 'amigo/a';
 
-  await miTransporter.sendMail({
-    from:    `"El Mundo de Manu" <${process.env.GMAIL_USER}>`,
+  await resend.emails.send({
+    from:    'El Mundo de Manu <soporte@elmundodemanu.com>',
     to:      email,
     subject: '💌 Tu Pack de Cartas de Amor Premium está listo',
     html: `<!DOCTYPE html>
@@ -297,7 +284,7 @@ async function enviarEmailAcceso({ email, nombre, token }) {
 app.get('/', (req, res) => res.json({
   estado: 'activo',
   servicio: 'Backend — Pack de Cartas de Amor Premium',
-  version: '9.0.0',
+  version: '10.0.0',
   pasarelas: ['mercadopago', 'wompi', 'bold'],
 }));
 
@@ -688,7 +675,7 @@ app.listen(PORT, () => {
   console.log(`   Modo Wompi: ${WOMPI_PUBLIC_KEY?.includes('prod') ? '💰 PRODUCCIÓN' : '🧪 PRUEBAS'}`);
   console.log(`   Modo Bold:  ${BOLD_IDENTITY_KEY?.length >= 20 ? '💰 PRODUCCIÓN' : '🧪 PRUEBAS'}`);
   console.log(`   Supabase:   ✅ ${process.env.SUPABASE_URL}`);
-  console.log(`   Email:      ✅ Gmail OAuth2 → ${process.env.GMAIL_USER}`);
+  console.log(`   Email:      ✅ Resend → soporte@elmundodemanu.com`);
   console.log('   ════════════════════════════════════════════');
   console.log('');
 });
